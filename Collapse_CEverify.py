@@ -1,5 +1,22 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 让TF优先用第一个GPU（Kaggle一般只有一个GPU）
+
 import numpy as np
 import tensorflow as tf
+
+# 检查GPU
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print(f"GPUs available: {gpus}")
+    except RuntimeError as e:
+        print(e)
+else:
+    print("No GPU found, running on CPU.")
+
+
 from tensorflow.keras import layers, Model, optimizers, losses
 from sklearn.metrics import f1_score, roc_auc_score
 import matplotlib.pyplot as plt

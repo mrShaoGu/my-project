@@ -1,22 +1,5 @@
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 让TF优先用第一个GPU（Kaggle一般只有一个GPU）
-
 import numpy as np
 import tensorflow as tf
-
-# 检查GPU
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"GPUs available: {gpus}")
-    except RuntimeError as e:
-        print(e)
-else:
-    print("No GPU found, running on CPU.")
-
-
 from tensorflow.keras import layers, Model, optimizers, losses
 from sklearn.metrics import f1_score, roc_auc_score
 import matplotlib.pyplot as plt
@@ -93,12 +76,26 @@ class ResNet18(Model):
 
 
 def get_simple_etf(d, c):
+    # d: in_features, c: num_classes
     I = np.eye(c)
     ones = np.ones((c, c)) / c
     M = I - ones
     U, _, _ = np.linalg.svd(M)
-    etf = U[:, :d].T * np.sqrt(c / (c - 1))
-    return etf.astype(np.float32)  # shape: [d, c]
+    # U: (c, c)
+    etf = U[:, 1:c] * np.sqrt(c / (c - 1))  # shape (c, c-1)
+    if d < c:
+        # pad to (d, c)
+        pad = np.zeros((d, c))
+        pad[:c, :] = etf
+        etf = pad
+    elif d == c - 1:
+        etf = etf.T
+    else:
+        # random orthogonal for extra dims
+        extra = np.random.randn(d - (c - 1), c)
+        extra = extra / np.linalg.norm(extra, axis=0, keepdims=True)
+        etf = np.concatenate([etf.T, extra], axis=0)
+    return etf[:d, :c].astype(np.float32)  # shape: [d, c]
 
 
 # 数据准备
@@ -109,7 +106,7 @@ y_train = y_train.astype(np.int32)
 y_test = y_test.astype(np.int32)
 output_size = 10
 batch_size = 64
-epochs = 5
+epochs = 100
 
 train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train)).shuffle(10000).batch(batch_size)
 test_dataset = tf.data.Dataset.from_tensor_slices((x_test, y_test)).batch(batch_size)
@@ -141,6 +138,12 @@ for epoch in range(epochs):
             loss = ce_loss + weight_decay * l2_loss
         grads = tape.gradient(loss, model.trainable_variables)
         optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+        # 固定最后一层为ETF
+        in_features = model.fc.kernel.shape[0]
+        out_features = model.fc.kernel.shape[1]
+        etf = get_simple_etf(in_features, out_features)  # shape: [in_features, out_features]
+        model.fc.kernel.assign(etf.astype(np.float32))
 
     # 评估
     def eval_model(dataset):
